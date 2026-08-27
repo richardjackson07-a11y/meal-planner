@@ -1,0 +1,6 @@
+# Keep LF in the repo. CRLF inside a GitHub Actions `run:` block breaks the
+# shell on Ubuntu runners with "$'\r': command not found".
+* text=auto eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.sh   text eol=lf

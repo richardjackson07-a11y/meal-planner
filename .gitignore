@@ -1,0 +1,10 @@
+# Netlify CLI state
+.netlify/
+
+# OS noise
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# editor
+.vscode/
