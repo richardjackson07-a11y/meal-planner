@@ -1258,12 +1258,18 @@ document.addEventListener("click", e=>{
   else if(a==="togglehide"){ state.hideDone=!state.hideDone; save(); renderShop(); }
   else if(a==="print") window.print();
   else if(a==="account") accountSheet();
-  else if(a==="sendlink") sendLink();
+  else if(a==="sendlink"){ e.preventDefault(); sendLink(); }
+  else if(a==="signin") signInPassword();
+  else if(a==="signup") signUpPassword();
+  else if(a==="showsignup") gateSignIn("signup");
+  else if(a==="showsignin") gateSignIn();
   else if(a==="createhh") createHousehold();
   else if(a==="invite") inviteSheet();
   else if(a==="doinvite") doInvite();
   else if(a==="signout") signOut();
   else if(a==="reload"){ closeSheet(); loadAll(); }
+  else if(a==="setpass") passwordSheet();
+  else if(a==="dosetpass") setPassword();
 });
 
 function addExtra(){
@@ -1276,6 +1282,11 @@ function addExtra(){
   el.value=""; save(); renderShop();
 }
 document.getElementById("extrain").addEventListener("keydown", e=>{ if(e.key==="Enter") addExtra(); });
+document.getElementById("gate").addEventListener("keydown", e=>{
+  if (e.key !== "Enter") return;
+  const btn = document.querySelector('#gate [data-act="signin"], #gate [data-act="signup"]');
+  if (btn) { e.preventDefault(); btn.click(); }
+});
 document.getElementById("rsearch").addEventListener("input", e=>{ searchTerm=e.target.value.trim(); renderRecipes(); });
 document.getElementById("filein").addEventListener("change", e=>{ if(e.target.files[0]) importData(e.target.files[0]); e.target.value=""; });
 
@@ -1475,16 +1486,71 @@ function showGate(html){
 }
 function hideGate(){ document.getElementById("gate").classList.remove("show"); }
 
-function gateSignIn(){
+/* Email + password rather than magic links: Supabase's built-in mailer only
+   allows 2 messages an hour per project, which is unusable for real sign-ins.
+   The magic link stays as a fallback for a forgotten password. */
+function gateSignIn(mode){
+  const signup = mode === "signup";
   showGate(
     '<div class="glogo">🍽️</div>' +
-    "<h2>Jackson Family Meal Planner</h2>" +
-    "<p>Sign in and your recipes, weekly plans and shopping list follow you to any device — and stay in step with the rest of the house.</p>" +
-    '<div class="field"><label>Email</label><input id="g_email" type="email" inputmode="email" autocomplete="email" placeholder="you@example.com"></div>' +
-    '<button class="btn primary" data-act="sendlink">Email me a sign-in link</button>' +
-    '<p class="note">No password to remember. We email you a link, you tap it, and this device stays signed in.</p>'
+    "<h2>" + (signup ? "Create your account" : "Jackson Family Meal Planner") + "</h2>" +
+    "<p>" + (signup
+      ? "Pick any password — let your phone remember it. Nothing is emailed to you."
+      : "Sign in and your recipes, weekly plans and shopping list follow you to any device, in step with the rest of the house.") + "</p>" +
+    '<div class="field"><label>Email</label>' +
+      '<input id="g_email" type="email" inputmode="email" autocomplete="email" autocapitalize="none" placeholder="you@example.com"></div>' +
+    '<div class="field"><label>Password</label>' +
+      '<input id="g_pass" type="password" autocomplete="' + (signup ? "new-password" : "current-password") + '" placeholder="' + (signup ? "at least 6 characters" : "your password") + '"></div>' +
+    '<button class="btn primary" data-act="' + (signup ? "signup" : "signin") + '">' +
+      (signup ? "Create account" : "Sign in") + "</button>" +
+    '<button class="btn ghost sm" data-act="' + (signup ? "showsignin" : "showsignup") + '" style="margin-top:10px">' +
+      (signup ? "I already have an account" : "First time here? Create an account") + "</button>" +
+    '<p class="note">' + (signup
+      ? "Once you are in, create your household — or ask whoever set it up to invite this address."
+      : 'Forgotten it? <a href="#" data-act="sendlink" style="color:var(--accent)">Email me a sign-in link instead</a>. That is limited to a couple of messages an hour.') +
+    "</p>"
   );
   setTimeout(() => { const el = document.getElementById("g_email"); if (el) el.focus(); }, 80);
+}
+
+function credentials(){
+  const email = (document.getElementById("g_email").value || "").trim();
+  const pass  = document.getElementById("g_pass") ? document.getElementById("g_pass").value : "";
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { toast("That does not look like an email address"); return null; }
+  return { email, pass };
+}
+
+async function signInPassword(){
+  const c = credentials(); if (!c) return;
+  if (!c.pass) { toast("Enter your password"); return; }
+  toast("Signing in…");
+  const { error } = await sb.auth.signInWithPassword({ email: c.email, password: c.pass });
+  if (error) {
+    toast(/invalid login/i.test(error.message) ? "Wrong email or password" : (error.message || "Could not sign in"));
+    return;
+  }
+  // onAuthStateChange picks it up from here
+}
+
+async function signUpPassword(){
+  const c = credentials(); if (!c) return;
+  if ((c.pass || "").length < 6) { toast("Password needs at least 6 characters"); return; }
+  toast("Creating your account…");
+  const { data, error } = await sb.auth.signUp({ email: c.email, password: c.pass });
+  if (error) {
+    toast(/already registered/i.test(error.message) ? "That email already has an account — sign in instead" : (error.message || "Could not create the account"));
+    return;
+  }
+  if (!data.session) {
+    // email confirmation is still switched on for the project
+    showGate(
+      '<div class="big">📬</div>' +
+      "<h2>Confirm your email</h2>" +
+      "<p>An account was created for <b>" + esc(c.email) + "</b>, but the project still requires email confirmation, so you need to tap the link that was sent.</p>" +
+      '<p class="note">Turning off <b>Confirm email</b> in Supabase removes this step entirely. That mailer only allows a couple of messages an hour.</p>' +
+      '<button class="btn ghost sm" data-act="showsignin">Back to sign in</button>'
+    );
+  }
 }
 function gateSent(email){
   showGate(
@@ -1492,7 +1558,7 @@ function gateSent(email){
     "<h2>Check your email</h2>" +
     "<p>A sign-in link is on its way to<br><b>" + esc(email) + "</b></p>" +
     '<p class="note">Open it on this device. The link is good for one hour. If it has not arrived in a minute, look in spam.</p>' +
-    '<button class="btn ghost sm" data-act="signout">Use a different email</button>'
+    '<button class="btn ghost sm" data-act="showsignin">Back to sign in</button>'
   );
 }
 function gateHousehold(){
@@ -1559,6 +1625,7 @@ function accountSheet(){
     (netState === "err" ? "<br><b style=\"color:#fca5a5\">Currently offline — changes are saved on this device and will go up when you are back.</b>" : "") +
     "</div>" +
     (householdId ? '<button class="btn green" data-act="invite">＋ Invite someone to the household</button>' : "") +
+    '<button class="btn ghost sm" data-act="setpass" style="margin-top:10px">🔑 Set or change your password</button>' +
     '<button class="btn ghost sm" data-act="reload" style="margin-top:10px">↻ Reload from the database</button>' +
     '<button class="btn ghost sm" data-act="signout" style="margin-top:10px">Sign out</button>' +
     '<button class="btn ghost sm" data-act="closesheet" style="margin-top:10px">Close</button>'
@@ -1587,6 +1654,27 @@ async function doInvite(){
   }
   closeSheet();
   toast(email + " can now see your household");
+}
+
+/* An account made with a magic link has no password until one is set here.
+   Doing it from inside the app avoids the reset email, which is rate limited. */
+function passwordSheet(){
+  openSheet(
+    '<h3 class="sh">Set a password</h3>' +
+    '<div class="subtle" style="margin-bottom:12px;line-height:1.7">Once this is set you can sign in with your email and password on any device, with no email involved.</div>' +
+    '<div class="field"><label>New password</label><input id="p_pass" type="password" autocomplete="new-password" placeholder="at least 6 characters"></div>' +
+    '<button class="btn primary" data-act="dosetpass">Save password</button>' +
+    '<button class="btn ghost sm" data-act="closesheet" style="margin-top:10px">Cancel</button>'
+  );
+  setTimeout(()=>{ const el=document.getElementById("p_pass"); if(el) el.focus(); },80);
+}
+async function setPassword(){
+  const pass=(document.getElementById("p_pass").value||"");
+  if(pass.length<6){ toast("Password needs at least 6 characters"); return; }
+  const { error } = await sb.auth.updateUser({ password: pass });
+  if(error){ toast(error.message||"Could not set the password"); return; }
+  closeSheet();
+  toast("Password set — you can sign in with it from now on");
 }
 
 async function signOut(){
