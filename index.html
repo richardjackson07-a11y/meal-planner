@@ -255,8 +255,8 @@
       <button class="btn primary" data-act="newrecipe">＋ New recipe</button>
       <button class="btn ghost sm" data-act="bulkimport" style="margin-top:10px">📋 Paste in several recipes at once</button>
       <div class="row" style="margin-top:10px">
-        <button class="btn ghost sm" data-act="export">⬇︎ Backup</button>
-        <button class="btn ghost sm" data-act="import">⬆︎ Restore</button>
+        <button class="btn ghost sm" data-act="export">⬇︎ Back up recipes</button>
+        <button class="btn ghost sm" data-act="import">⬆︎ Restore from file</button>
       </div>
       <input type="file" id="filein" accept="application/json,.json" style="display:none">
     </div>
@@ -295,7 +295,7 @@
     </div>
   </section>
 
-  <p class="hint">Everything saves on this device automatically.<br>Use <b>Backup</b> on the Recipes tab to keep a copy of your recipe box.</p>
+  <p class="hint">Everything saves to your household automatically and appears on every signed-in device.<br>Supabase does not back up free projects, so <b>Back up recipes</b> now and then is worth it.</p>
 </div>
 
 <div class="gate" id="gate"></div>
@@ -1165,11 +1165,20 @@ function importData(file){
     try{
       const s=JSON.parse(fr.result);
       if(!s.recipes) throw new Error("bad file");
-      if(!confirm("Replace everything on this device with the backup? ("+s.recipes.length+" recipes)")) return;
-      state=s;
-      if(!state.current) state.current=iso(mondayOf(new Date()));
-      if(!state.weeks) state.weeks={};
-      save(); render(); toast("Backup restored");
+      // Restore only ever ADDS. Replacing wholesale used to be safe when the
+      // data lived on one device, but now a save diffs against the database and
+      // would delete every recipe added since the backup — on everyone's phone.
+      const have=new Set(state.recipes.map(r=>String(r.name||"").trim().toLowerCase()));
+      const add=(s.recipes||[]).filter(r=>r && r.name && !have.has(String(r.name).trim().toLowerCase()));
+      if(!add.length){
+        toast("Nothing to add — all "+(s.recipes||[]).length+" of those are already here");
+        return;
+      }
+      if(!confirm("Add "+add.length+" recipe"+(add.length===1?"":"s")+" from this backup?\n\nNothing already in your household is changed or removed.")) return;
+      add.forEach(r=>{ if(!isUUID(r.id)) r.id=newId(); r.t=now(); delete r.sample; });
+      state.recipes.push(...add);
+      save(); render();
+      toast("Added "+add.length+" recipe"+(add.length===1?"":"s")+" from the backup");
     }catch(e){ toast("That file could not be read"); }
   };
   fr.readAsText(file);
