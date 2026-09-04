@@ -18,8 +18,11 @@ whole time. Nothing here breaks it.
 1. Go to <https://supabase.com/dashboard>, sign in with GitHub or email.
 2. **New project**.
    - **Name**: `meal-planner`
-   - **Database password**: let it generate one, and save it in your password
-     manager. You won't need it day to day, but it can't be recovered later.
+   - **Database password**: if it offers one, save it — but do not worry if you
+     never saw the prompt. Nothing in this project uses it. It is only for
+     connecting to Postgres directly (psql, a SQL GUI, the Supabase CLI).
+     Everything here talks over HTTPS with an API key instead. If you ever do
+     need it, reset it at **Settings → Database → Reset database password**.
    - **Region**: pick **East US (North Virginia)** or **Central US** — closest
      to Houston, so the app feels snappy.
 3. Wait for it to finish provisioning (a minute or two).
@@ -42,15 +45,27 @@ can just re-run the whole file.
 
 ### B1. Get your keys
 
-Left sidebar → **Project Settings** → **API**. You need two values:
+Left sidebar → **Settings** → **API Keys**. You need two values:
 
-- **Project URL** — looks like `https://abcdefghijkl.supabase.co`
-- **anon / public key** — a long `eyJ...` string
+- **Project URL** — looks like `https://abcdefghijkl.supabase.co`.
+  If you don't see it on that page, it's under **Settings → General**, or just
+  read it off your browser's address bar: the dashboard URL contains the
+  project ref, so `.../project/abcdefghijkl` means your URL is
+  `https://abcdefghijkl.supabase.co`.
+- **The public client key.** Which name you see depends on how new the project
+  is — Supabase is part-way through renaming these:
+  - a **publishable** key starting `sb_publishable_...` (newer projects), or
+  - an **anon / public** key, a long string starting `eyJ...` (older projects)
 
-> The anon key is *designed* to be public — it ends up in the web page itself.
-> It is not a password. The thing that actually protects your data is row-level
-> security, which the schema already set up. The key you must never share is the
-> **service_role** key on that same page. Don't put that anywhere.
+  Take whichever one your dashboard shows. They do the same job and both work
+  with this setup. If you see both, prefer the publishable one — the anon key
+  is being retired.
+
+> That key is *designed* to be public — it ends up inside the web page itself.
+> It is not a password. What actually protects your data is row-level security,
+> which the schema already set up. The one to never share is the **secret** key
+> (`sb_secret_...`, previously **service_role**) on that same page. It bypasses
+> every security policy. It goes nowhere near GitHub, the app, or me.
 
 ### B2. Make the repository
 
@@ -80,7 +95,11 @@ repository secret**. Add two:
 | Name | Value |
 |---|---|
 | `SUPABASE_URL` | your Project URL, no trailing slash |
-| `SUPABASE_ANON_KEY` | the anon / public key |
+| `SUPABASE_ANON_KEY` | the publishable (or anon) key from B1 |
+
+The secret is named `SUPABASE_ANON_KEY` for historical reasons; it is just a
+label the workflow looks up, so paste a `sb_publishable_...` key into it
+without renaming anything.
 
 ### B4. Prove it works
 
@@ -158,7 +177,7 @@ either of you sees the same recipes, weeks and lists, and nobody else can.
 Send me:
 
 1. The **Project URL**
-2. The **anon / public key**
+2. The **publishable** (or **anon**) key
 
 Both are safe to paste in chat — they're public by design and useless without a
 signed-in session, thanks to the row-level security in the schema. Keep the
