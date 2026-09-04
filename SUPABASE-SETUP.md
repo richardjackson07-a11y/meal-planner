@@ -196,6 +196,6 @@ two devices, and importing your existing recipe box so nothing is lost.
   has views for "how often have we cooked this" and "when did we last have it".
   Once that data exists I can make the 🎲 builder skip anything you ate in the
   last two weeks.
-- **The Google Sheets path becomes redundant.** I'd leave it working until
-  you're happy with Supabase, then retire it. Your JSON **Backup** button stays
-  either way.
+- **The Google Sheets path is gone.** It was removed once Supabase was working;
+  the Apps Script backend and its setup guide are no longer in this repo (they
+  remain in git history if ever needed). Your JSON **Backup** button stays.
