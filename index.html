@@ -371,7 +371,9 @@ function weekRange(wk){
   const e=(a.getMonth()===b.getMonth()? b.getDate() : M[b.getMonth()]+" "+b.getDate());
   return s+" – "+e;
 }
-function uid(){return Math.random().toString(36).slice(2,9)}
+/* Postgres stores these in uuid columns, so short random ids will not save.
+   newId() is defined in the Supabase section below and hoisted. */
+function uid(){ return newId(); }
 
 /* ---------- quantity helpers ---------- */
 const UNITS = ["cups","cup","tbsp","tablespoons","tablespoon","tsp","teaspoons","teaspoon","lbs","lb","pounds","pound","oz","ounces","ounce","g","kg","ml","l","liters","cloves","clove","cans","can","jars","jar","pkg","packages","package","bunches","bunch","heads","head","slices","slice","sticks","stick","pinch","dash","qt","quart","pint","dozen","boxes","box","bags","bag","containers","container","bottles","bottle","ears","stalks","stalk","sprigs","sprig","links","fillets","fillet","breasts","breast","thighs","thigh"];
@@ -412,7 +414,7 @@ function fmtQty(n){
 
 /* ---------- aisle guessing ---------- */
 const AISLE_WORDS = {
-  [A.produce]:["okra","coleslaw","slaw","lettuce","romaine","arugula","tomato","onion","green onion","scallion","shallot","leek","garlic","potato","sweet potato","carrot","celery","bell pepper","jalapeno","jalapeño","broccoli","spinach","kale","cucumber","zucchini","squash","mushroom","avocado","lime","lemon","cilantro","parsley","basil","fresh dill","fresh rosemary","fresh thyme","sprig","ginger","apple","banana","berry","berries","strawberr","grape","salad","greens","cabbage","asparagus","green bean","cauliflower","peach","pear","melon","orange","radish","brussels","snap pea","corn on the cob"],
+  [A.produce]:["corn","okra","coleslaw","slaw","lettuce","romaine","arugula","tomato","onion","green onion","scallion","shallot","leek","garlic","potato","sweet potato","carrot","celery","bell pepper","jalapeno","jalapeño","broccoli","spinach","kale","cucumber","zucchini","squash","mushroom","avocado","lime","lemon","cilantro","parsley","basil","fresh dill","fresh rosemary","fresh thyme","sprig","ginger","apple","banana","berry","berries","strawberr","grape","salad","greens","cabbage","asparagus","green bean","cauliflower","peach","pear","melon","orange","radish","brussels","snap pea","corn on the cob"],
   [A.bakery]:["bakery","french bread","baguette","croissant","cake","donut","cornbread"],
   [A.deli]:["deli","rotisserie","sliced turkey","sliced ham","charcuterie"],
   [A["market"]]:["andouille","kielbasa","chicken","beef","steak","ground beef","ground turkey","pork","bacon","sausage","turkey","ham","brisket","ribs","roast","chuck","chop","tenderloin","sirloin","flank","meatball","lamb","chorizo","pepperoni","italian sausage","smoked sausage","pork shoulder"],
@@ -422,9 +424,9 @@ const AISLE_WORDS = {
   [A.a1]:["wine","beer","white wine","red wine","mixer"],
   [A.a2]:["bread","bun","hamburger bun","hot dog bun","roll","tortilla","corn tortilla","flour tortilla","taco shell","tostada","pita","bagel","naan","english muffin","peanut butter","jam","jelly","honey","popcorn","rice cake","pudding","toaster pastry","pop tart"],
   [A.a3]:["condiment","ketchup","mustard","dijon","mayo","mayonnaise","salad dressing","ranch","pickle","dill pickle","relish","olive","caper","vinegar","apple cider vinegar","bbq sauce","barbecue sauce","picante","soy sauce","sesame oil","teriyaki","fish sauce","hoisin","asian","hot sauce","sriracha","worcestershire","horseradish"],
-  [A.a4]:["pasta","spaghetti","linguine","fettuccine","penne","ziti","rigatoni","macaroni","noodle","rice","long grain rice","bean (dry)","dry bean","lentil","soup","broth","stock","chicken broth","beef broth","gravy","gravy mix","stuffing","boxed dinner","salsa","cajun","cajun seasoning","creole seasoning","file powder","zatarain","marinara","pasta sauce","pizza sauce","alfredo sauce","couscous","quinoa"],
+  [A.a4]:["enchilada sauce","pasta","spaghetti","linguine","fettuccine","penne","ziti","rigatoni","macaroni","noodle","rice","long grain rice","bean (dry)","dry bean","lentil","soup","broth","stock","chicken broth","beef broth","gravy","gravy mix","stuffing","boxed dinner","salsa","cajun","cajun seasoning","creole seasoning","file powder","zatarain","marinara","pasta sauce","pizza sauce","alfredo sauce","couscous","quinoa"],
   [A.a5]:["canned","can of","diced tomato","crushed tomato","tomato sauce","tomato paste","canned tomato","kidney bean","black bean","pinto bean","chickpea","garbanzo","canned corn","canned fruit","canned chili","canned fish","goya","pimento","coconut milk","evaporated milk"],
-  [A.a6]:["flour","sugar","brown sugar","powdered sugar","salt","black pepper","peppercorn","spice","seasoning","italian seasoning","taco seasoning","blackening","old bay","cumin","paprika","chili powder","oregano","thyme","rosemary","dill","bay leaf","bay leaves","cinnamon","nutmeg","garlic powder","onion powder","cayenne","curry","turmeric","red pepper flake","chili flake","oil","olive oil","vegetable oil","shortening","cooking spray","baking powder","baking soda","cornstarch","yeast","vanilla","cake mix","biscuit mix","pie filling","marshmallow","jell-o","cornmeal","masa","breadcrumb","panko","baking nut","pecan","walnut","almond","powdered milk"],
+  [A.a6]:["sesame seed","flour","sugar","brown sugar","powdered sugar","salt","black pepper","peppercorn","spice","seasoning","italian seasoning","taco seasoning","blackening","old bay","cumin","paprika","chili powder","oregano","thyme","rosemary","dill","bay leaf","bay leaves","cinnamon","nutmeg","garlic powder","onion powder","cayenne","curry","turmeric","red pepper flake","chili flake","oil","olive oil","vegetable oil","shortening","cooking spray","baking powder","baking soda","cornstarch","yeast","vanilla","cake mix","biscuit mix","pie filling","marshmallow","jell-o","cornmeal","masa","breadcrumb","panko","baking nut","pecan","walnut","almond","powdered milk"],
   [A.a7]:["cereal","oat","oatmeal","syrup","maple syrup","pancake mix","dried fruit","raisin","granola","instant breakfast","fruit snack"],
   [A.a8]:["chip","tortilla chip","potato chip","snack","pretzel","cracker jack","snacking nut","cashew"],
   [A.a9]:["coffee","coffee creamer","coffee filter","tea","cookie","cracker","hot cocoa"],
@@ -735,6 +737,7 @@ function renderRecipes(){
   const tf=document.getElementById("tagfilter");
   tf.innerHTML = allTags().map(t=>'<button class="chip'+(tagFilter===t?" on":"")+'" data-tag="'+esc(t)+'">'+esc(t)+"</button>").join("")
     + (tagFilter?'<button class="chip" data-tag="">✕ clear</button>':"");
+  const lastCooked=lastCookedMap();
   const list=state.recipes.filter(matchesSearch).sort((a,b)=>a.name.localeCompare(b.name));
   document.getElementById("rcount").textContent=state.recipes.length+" recipe"+(state.recipes.length===1?"":"s");
   if(!list.length){
@@ -746,6 +749,7 @@ function renderRecipes(){
     const open=openRecipes[r.id];
     const bits=[]; if(r.servings) bits.push(r.servings+" servings"); if(r.time) bits.push(r.time);
     bits.push((r.ingredients||[]).length+" ingredients");
+    if(lastCooked[r.id]) bits.push("last cooked "+weeksAgoLabel(lastCooked[r.id]));
     return '<div class="rcard'+(open?" open":"")+'">'+
       '<div class="rhead" data-open="'+r.id+'">'+
         '<div class="emoji">'+(r.emoji||"🍽️")+"</div>"+
@@ -947,9 +951,20 @@ function doBulk(){
   }
   if(cur) out.push(cur);
   if(!out.length){ toast("Nothing found — start each recipe with #"); return; }
-  state.recipes.push(...out);
+
+  // Pasting the same list twice is an easy mistake; skip names already in the
+  // box rather than creating a second copy of everything.
+  const have=new Set(state.recipes.map(r=>r.name.trim().toLowerCase()));
+  const fresh=[], dupes=[];
+  out.forEach(r=>{
+    const k=r.name.trim().toLowerCase();
+    if(have.has(k)) dupes.push(r.name); else { have.add(k); fresh.push(r); }
+  });
+  if(!fresh.length){ toast("Already have all "+dupes.length+" of those"); return; }
+  state.recipes.push(...fresh);
   save(); closeSheet(); render();
-  toast("Added "+out.length+" recipe"+(out.length===1?"":"s"));
+  toast("Added "+fresh.length+" recipe"+(fresh.length===1?"":"s")+
+        (dupes.length? " — skipped "+dupes.length+" already in the box" : ""));
 }
 
 /* ============================================================
@@ -978,6 +993,41 @@ function copyLast(){
   w.checked={};
   save(); render(); toast("Copied last week's dinners");
 }
+/* How far back the fill button considers something "recent". Two weeks means
+   a fortnight between repeats, which is about where a dinner stops feeling
+   like a rerun. */
+const RECENT_WEEKS = 2;
+
+/* When each recipe was last cooked, looking only at weeks before this one.
+   plan_days keeps every week, so this is real history, not a guess. */
+function lastCookedMap(){
+  const out = {};
+  for (const k in state.weeks) {
+    if (k >= state.current) continue;               // ISO dates sort correctly as strings
+    (state.weeks[k].days || []).forEach(d => {
+      if (d && d.type === "recipe" && (!out[d.id] || k > out[d.id])) out[d.id] = k;
+    });
+  }
+  return out;
+}
+function recentSet(weeks){
+  const cutoff = addDaysISO(state.current, -7 * (weeks || RECENT_WEEKS));
+  const seen = new Set();
+  for (const k in state.weeks) {
+    if (k < cutoff || k >= state.current) continue;
+    (state.weeks[k].days || []).forEach(d => { if (d && d.type === "recipe") seen.add(d.id); });
+  }
+  return seen;
+}
+function weeksAgoLabel(wkStart){
+  const diff = Math.round((parseISO(state.current) - parseISO(wkStart)) / (7 * 86400000));
+  if (diff <= 0) return "this week";
+  if (diff === 1) return "last week";
+  if (diff < 9)   return diff + " weeks ago";
+  const m = Math.round(diff / 4.345);
+  return m <= 1 ? "a month ago" : m + " months ago";
+}
+
 const PROTEINS=["beef","pork","chicken","seafood"];
 function proteinOf(r){ return (r.tags||[]).find(t=>PROTEINS.includes(t.toLowerCase())) || "other"; }
 function hasTag(r,t){ return (r.tags||[]).some(x=>x.toLowerCase()===t); }
@@ -1005,12 +1055,20 @@ function fillRandom(){
   // Alfredo is tagged both, so prefer a non-Cajun pasta — otherwise it fills
   // the pasta slot and Cajun still comes up again later in the week.
   const chosen=()=>planned.concat(picks);
+
+  // Anything cooked in the last fortnight goes to the back of the queue. If
+  // that would leave nothing to choose from, take the repeat rather than
+  // leave the night empty.
+  const recent = recentSet();
+  const fresh = list => { const f = list.filter(r => !recent.has(r.id)); return f.length ? f : list; };
+  let skipped = 0;
+
   if(picks.length<openDays.length && !chosen().some(r=>hasTag(r,"pasta")))
-    take(pickRandom(avail().filter(r=>hasTag(r,"pasta") && !hasTag(r,"cajun"))) ||
-         pickRandom(avail().filter(r=>hasTag(r,"pasta"))));
+    take(pickRandom(fresh(avail().filter(r=>hasTag(r,"pasta") && !hasTag(r,"cajun")))) ||
+         pickRandom(fresh(avail().filter(r=>hasTag(r,"pasta")))));
   if(picks.length<openDays.length && !chosen().some(r=>hasTag(r,"cajun")))
-    take(pickRandom(avail().filter(r=>hasTag(r,"cajun") && !hasTag(r,"pasta"))) ||
-         pickRandom(avail().filter(r=>hasTag(r,"cajun"))));
+    take(pickRandom(fresh(avail().filter(r=>hasTag(r,"cajun") && !hasTag(r,"pasta")))) ||
+         pickRandom(fresh(avail().filter(r=>hasTag(r,"cajun")))));
 
   // fill the rest from whichever protein has come up least so far, holding
   // pasta and Cajun to their one night each unless nothing else is left
@@ -1018,9 +1076,11 @@ function fillRandom(){
     const pool=avail();
     if(!pool.length) break;
     const plain=pool.filter(r=>!hasTag(r,"pasta") && !hasTag(r,"cajun"));
-    const from=plain.length?plain:pool;
+    const from=fresh(plain.length?plain:pool);
     const lowest=Math.min(...from.map(r=>counts[proteinOf(r)]));
-    take(pickRandom(from.filter(r=>counts[proteinOf(r)]===lowest)));
+    const pick=pickRandom(from.filter(r=>counts[proteinOf(r)]===lowest));
+    if(pick && recent.has(pick.id)) skipped++;       // had to reuse something recent
+    take(pick);
   }
   if(!picks.length){ toast("No unused recipes left to add"); return; }
 
@@ -1029,7 +1089,9 @@ function fillRandom(){
   picks.forEach((r,k)=>{ w.days[openDays[k]]={type:"recipe", id:r.id, servings:r.servings||4}; w.dayT[openDays[k]]=now(); });
 
   save(); render();
-  toast("Filled "+picks.length+" night"+(picks.length===1?"":"s")+" — tap 🎲 again for a different mix");
+  const avoided = recent.size - picks.filter(r => recent.has(r.id)).length;
+  toast("Filled "+picks.length+" night"+(picks.length===1?"":"s")+
+        (avoided>0 ? " — skipped "+avoided+" you had recently" : " — tap 🎲 again for a different mix"));
 }
 function clearWeek(){
   if(!confirm("Clear all dinners for "+weekRange(state.current)+"?")) return;
