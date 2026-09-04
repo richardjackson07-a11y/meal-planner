@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#0f1420">
 <title>Jackson Family Meal Planner</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   :root{
     --bg:#0f1420;
@@ -142,6 +143,17 @@
   .syncbtn.ok{color:var(--accent2)} .syncbtn.ok .dot{background:var(--accent2)}
   .syncbtn.err{color:var(--danger)} .syncbtn.err .dot{background:var(--danger)}
   .syncbtn.busy{color:var(--warn)} .syncbtn.busy .dot{background:var(--warn)}
+  /* sign-in / household gate */
+  .gate{position:fixed;inset:0;z-index:80;background:linear-gradient(180deg,#0d1220,#0f1420 40%);display:none;overflow-y:auto}
+  .gate.show{display:flex;align-items:center;justify-content:center;padding:24px}
+  .gatecard{max-width:400px;width:100%;text-align:center}
+  .gatecard .glogo{width:64px;height:64px;border-radius:18px;margin:0 auto 18px;
+    background:linear-gradient(135deg,var(--accent),#ef4444);display:flex;align-items:center;justify-content:center;font-size:32px;box-shadow:var(--shadow)}
+  .gatecard h2{font-size:21px;margin:0 0 8px;font-weight:700}
+  .gatecard p{font-size:14px;color:var(--muted);margin:0 0 20px;line-height:1.6}
+  .gatecard .field{text-align:left}
+  .gatecard .note{font-size:12.5px;color:var(--muted);margin-top:14px;line-height:1.6}
+  .gatecard .big{font-size:38px;margin-bottom:12px}
   .storeline{font-size:11.5px;color:var(--muted);margin-top:9px;padding-top:9px;border-top:1px solid var(--line);text-align:center;line-height:1.5}
   .storeline b{color:var(--text)}
   .aisle{margin-bottom:16px}
@@ -200,7 +212,7 @@
       <h1>Jackson Family Meal Planner</h1>
       <p>Weekly dinners · recipe box · shopping list by H-E-B aisle</p>
     </div>
-    <button class="syncbtn" data-act="sharing" id="syncbtn"><span class="dot"></span><span id="synctext">Solo</span></button>
+    <button class="syncbtn" data-act="account" id="syncbtn"><span class="dot"></span><span id="synctext">…</span></button>
   </header>
 
   <nav class="tabs">
@@ -286,6 +298,7 @@
   <p class="hint">Everything saves on this device automatically.<br>Use <b>Backup</b> on the Recipes tab to keep a copy of your recipe box.</p>
 </div>
 
+<div class="gate" id="gate"></div>
 <div class="sheet" id="sheet"><div class="scrim" data-act="closesheet"></div><div class="panel"><div class="grab"></div><div id="sheetbody"></div></div></div>
 <div class="toast" id="toast"></div>
 
@@ -658,7 +671,7 @@ function save(){
     if(k!==state.current && !w.days.some(Boolean) && !(w.extras&&w.extras.length)) delete state.weeks[k];
   }
   localStorage.setItem(KEY, JSON.stringify(state));
-  schedulePush();
+  schedulePersist();
 }
 function load(){ try{ const s=JSON.parse(localStorage.getItem(KEY)); if(!s||!s.recipes) return null; return s; }catch(e){ return null; } }
 function week(){ if(!state.weeks[state.current]) state.weeks[state.current]=blankWeek(); return state.weeks[state.current]; }
@@ -667,7 +680,7 @@ function recipe(id){ return state.recipes.find(r=>r.id===id) || null; }
 /* ============================================================
    RENDER
    ============================================================ */
-function render(){ renderWeek(); renderRecipes(); renderShop(); paintSync(); }
+function render(){ renderWeek(); renderRecipes(); renderShop(); paintNet(); }
 
 function renderWeek(){
   const w=week(), todayISO=iso(new Date());
@@ -1182,10 +1195,13 @@ document.addEventListener("click", e=>{
   else if(a==="uncheckall"){ week().checked={}; save(); renderShop(); toast("All unchecked"); }
   else if(a==="togglehide"){ state.hideDone=!state.hideDone; save(); renderShop(); }
   else if(a==="print") window.print();
-  else if(a==="sharing") sharingSheet();
-  else if(a==="connect") connectSync();
-  else if(a==="disconnect") disconnectSync();
-  else if(a==="syncnow"){ closeSheet(); pullNow(false).then(pushNow); }
+  else if(a==="account") accountSheet();
+  else if(a==="sendlink") sendLink();
+  else if(a==="createhh") createHousehold();
+  else if(a==="invite") inviteSheet();
+  else if(a==="doinvite") doInvite();
+  else if(a==="signout") signOut();
+  else if(a==="reload"){ closeSheet(); loadAll(); }
 });
 
 function addExtra(){
@@ -1202,180 +1218,368 @@ document.getElementById("rsearch").addEventListener("input", e=>{ searchTerm=e.t
 document.getElementById("filein").addEventListener("change", e=>{ if(e.target.files[0]) importData(e.target.files[0]); e.target.value=""; });
 
 /* ============================================================
-   SHARING — one Google Sheet behind an Apps Script web app.
-   Every record is timestamped, so when two phones both change
-   things the newer edit wins per item instead of one whole
-   device stomping the other.
+   SUPABASE — accounts, storage and live updates.
+   The app's own state stays in memory exactly as before; this layer
+   loads it, writes changes back, and listens for the other phone.
    ============================================================ */
-const SYNC_POLL = 10000;
-let pushT=null, syncing=false, syncState="off", lastSyncAt=0;
+const SUPA_URL = "https://jnxuxtwfscvvyguegxjv.supabase.co";
+const SUPA_KEY = "sb_publishable_o2A9CZ12z54Uo-My6D3pPA_wSkHexPB";
+const sb = window.supabase.createClient(SUPA_URL, SUPA_KEY, {
+  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
+});
 
-function syncOn(){ return !!(state.sync && state.sync.on && state.sync.url && state.sync.code); }
-function docOf(){ return {recipes:state.recipes, weeks:state.weeks, del:state.del}; }
-function applyDoc(m){
-  state.recipes=m.recipes||[]; state.weeks=m.weeks||{}; state.del=m.del||{r:{},x:{}};
-  migrate(state);
-  if(!state.weeks[state.current]) state.weeks[state.current]=blankWeek();
-  localStorage.setItem(KEY, JSON.stringify(state));
-}
+let session = null, householdId = null, snapshot = null;
+let persistT = null, persisting = false, netState = "off", liveChannel = null, remoteT = null;
 
-function mergeDocs(a,b){
-  const del={r:{},x:{}};
-  [a.del,b.del].forEach(d=>{ if(!d) return;
-    for(const k in (d.r||{})) del.r[k]=Math.max(del.r[k]||0, d.r[k]);
-    for(const k in (d.x||{})) del.x[k]=Math.max(del.x[k]||0, d.x[k]);
+const isUUID = v => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(v || ""));
+function newId(){
+  if (crypto && crypto.randomUUID) return crypto.randomUUID();
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    return (c === "x" ? r : (r & 3 | 8)).toString(16);
   });
-  const rmap={};
-  [a.recipes||[], b.recipes||[]].forEach(list=>list.forEach(r=>{
-    const cur=rmap[r.id]; if(!cur || (r.t||0)>(cur.t||0)) rmap[r.id]=r;
-  }));
-  const recipes=Object.values(rmap).filter(r=>!(del.r[r.id] && del.r[r.id]>(r.t||0)));
-
-  const weeks={}, keys=new Set([...Object.keys(a.weeks||{}), ...Object.keys(b.weeks||{})]);
-  keys.forEach(k=>{
-    const wa=(a.weeks||{})[k], wb=(b.weeks||{})[k];
-    if(!wa){ weeks[k]=wb; return; }
-    if(!wb){ weeks[k]=wa; return; }
-    const w={days:[], dayT:[], extras:[], checked:{}};
-    for(let i=0;i<7;i++){
-      const ta=(wa.dayT||[])[i]||0, tb=(wb.dayT||[])[i]||0;
-      if(tb>ta){ w.days[i]=wb.days[i]; w.dayT[i]=tb; } else { w.days[i]=wa.days[i]; w.dayT[i]=ta; }
-    }
-    const xmap={};
-    [wa.extras||[], wb.extras||[]].forEach(list=>list.forEach(x=>{
-      const cur=xmap[x.id]; if(!cur || (x.t||0)>(cur.t||0)) xmap[x.id]=x;
-    }));
-    w.extras=Object.values(xmap).filter(x=>!(del.x[x.id] && del.x[x.id]>(x.t||0)));
-    [wa.checked||{}, wb.checked||{}].forEach(c=>{
-      for(const key in c){ const v=c[key]; if(!w.checked[key] || (v.t||0)>(w.checked[key].t||0)) w.checked[key]=v; }
-    });
-    weeks[k]=w;
-  });
-  return {recipes, weeks, del};
 }
 
-/* text/plain dodges the CORS preflight that Apps Script cannot answer */
-async function api(action, extra){
-  const body=Object.assign({action, code:state.sync.code}, extra||{});
-  const res=await fetch(state.sync.url, {
-    method:"POST", redirect:"follow",
-    headers:{"Content-Type":"text/plain;charset=utf-8"},
-    body:JSON.stringify(body)
-  });
-  if(!res.ok) throw new Error("HTTP "+res.status);
-  const j=await res.json();
-  if(j.error) throw new Error(j.error);
-  return j;
-}
-function setSync(st){ syncState=st; paintSync(); }
-function paintSync(){
-  const b=document.getElementById("syncbtn"), t=document.getElementById("synctext");
-  if(!b) return;
-  b.classList.remove("ok","err","busy");
-  if(!syncOn()){ t.textContent="Solo"; return; }
-  if(syncState==="busy"){ b.classList.add("busy"); t.textContent="Syncing"; return; }
-  if(syncState==="err"){ b.classList.add("err"); t.textContent="Offline"; return; }
-  b.classList.add("ok"); t.textContent="Shared";
-}
-function schedulePush(){
-  if(!syncOn()) return;
-  clearTimeout(pushT);
-  pushT=setTimeout(pushNow, 1200);
-}
-async function pushNow(){
-  if(!syncOn() || syncing) return;
-  syncing=true; setSync("busy");
-  try{
-    let r=await api("push", {rev:state.rev, doc:docOf()});
-    if(r.conflict){                       // someone else wrote first — fold theirs in and retry
-      applyDoc(mergeDocs(docOf(), r.doc));
-      r=await api("push", {rev:r.rev, doc:docOf()});
-      render();
-    }
-    state.rev=r.rev;
-    localStorage.setItem(KEY, JSON.stringify(state));
-    lastSyncAt=now(); setSync("ok");
-  }catch(e){ setSync("err"); }
-  syncing=false;
-}
-async function pullNow(quiet){
-  if(!syncOn() || syncing) return;
-  syncing=true; if(!quiet) setSync("busy");
-  try{
-    const r=await api("pull", {});
-    if(r.doc && r.rev!==state.rev){
-      const before=JSON.stringify(docOf());
-      applyDoc(mergeDocs(docOf(), r.doc));
-      state.rev=r.rev;
-      localStorage.setItem(KEY, JSON.stringify(state));
-      render();
-      if(JSON.stringify(docOf())!==JSON.stringify(r.doc)) schedulePush();
-      if(before!==JSON.stringify(docOf()) && !quiet) toast("Updated from your household");
-    }
-    lastSyncAt=now(); setSync("ok");
-  }catch(e){ setSync("err"); }
-  syncing=false;
-}
-
-function sharingSheet(){
-  const on=syncOn();
-  openSheet(
-    '<h3 class="sh">Share with your household</h3>'+
-    '<div class="subtle" style="margin-bottom:12px;line-height:1.6">Both phones enter the same web app link and household code. '+
-    'The list then lives in one Google Sheet you own — add something on her phone and it shows up here within about ten seconds.'+
-    '<br><br>Setup steps are in <b>SETUP.md</b> next to this file.</div>'+
-    '<div class="field"><label>Apps Script web app URL</label>'+
-      '<input id="s_url" value="'+esc((state.sync&&state.sync.url)||"")+'" placeholder="https://script.google.com/macros/s/…/exec"></div>'+
-    '<div class="field"><label>Household code</label>'+
-      '<input id="s_code" value="'+esc((state.sync&&state.sync.code)||"")+'" placeholder="jackson" autocapitalize="none"></div>'+
-    '<button class="btn green" data-act="connect">'+(on?"Reconnect":"Connect")+"</button>"+
-    (on?'<button class="btn ghost sm" data-act="syncnow" style="margin-top:10px">↻ Sync now</button>'+
-        '<button class="btn danger sm" data-act="disconnect" style="margin-top:10px">Stop sharing on this device</button>':"")+
-    '<button class="btn ghost sm" data-act="closesheet" style="margin-top:10px">Close</button>'+
-    '<div class="subtle" style="text-align:center;margin-top:10px">'+
-      (on? "Connected · last synced "+(lastSyncAt? Math.round((now()-lastSyncAt)/1000)+"s ago":"not yet")
-         : "Not sharing — this device is on its own")+"</div>"
-  );
-}
-async function connectSync(){
-  const url=document.getElementById("s_url").value.trim();
-  const code=document.getElementById("s_code").value.trim().toLowerCase();
-  if(!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec/.test(url)){ toast("That does not look like the /exec web app URL"); return; }
-  if(!code){ toast("Pick a household code"); return; }
-  state.sync={url, code, on:true};
-  setSync("busy");
-  try{
-    const r=await api("pull", {});
-    if(r.doc && (r.doc.recipes||[]).length){
-      const n=r.doc.recipes.length;
-      if(confirm("This household already has "+n+" recipes saved.\n\nOK  = use the household list on this phone\nCancel = keep this phone's recipes and add them to the household")){
-        applyDoc(r.doc); state.rev=r.rev;
-      } else {
-        applyDoc(mergeDocs(docOf(), r.doc)); state.rev=r.rev; schedulePush();
-      }
-    } else {
-      schedulePush();                     // empty household — seed it from this phone
-    }
-    localStorage.setItem(KEY, JSON.stringify(state));
-    closeSheet(); render(); setSync("ok");
-    toast("Sharing on — code “"+code+"”");
-    startPolling();
-  }catch(e){
-    setSync("err");
-    toast("Could not reach the web app — check the URL");
+/* Recipes created before the move have short ids; Postgres wants uuids. */
+function normaliseIds(){
+  const map = {};
+  (state.recipes || []).forEach(r => { if (!isUUID(r.id)) { const n = newId(); map[r.id] = n; r.id = n; } });
+  for (const k in state.weeks) {
+    (state.weeks[k].days || []).forEach(d => { if (d && d.type === "recipe" && map[d.id]) d.id = map[d.id]; });
+    (state.weeks[k].extras || []).forEach(x => { if (!isUUID(x.id)) x.id = newId(); });
   }
 }
-function disconnectSync(){
-  state.sync={url:state.sync.url, code:state.sync.code, on:false};
+
+/* ---------- status pill ---------- */
+function setNet(st){ netState = st; paintNet(); }
+function paintNet(){
+  const b = document.getElementById("syncbtn"), t = document.getElementById("synctext");
+  if (!b) return;
+  b.classList.remove("ok", "err", "busy");
+  if (!session)          { t.textContent = "Sign in"; return; }
+  if (netState === "busy"){ b.classList.add("busy"); t.textContent = "Saving";  return; }
+  if (netState === "err") { b.classList.add("err");  t.textContent = "Offline"; return; }
+  b.classList.add("ok");
+  t.textContent = (session.user.email || "Account").split("@")[0].slice(0, 10);
+}
+
+/* ---------- row <-> app shapes ---------- */
+function rowToRecipe(r){
+  return { id:r.id, name:r.name, emoji:r.emoji, servings:r.servings, time:r.time_text || "",
+           tags:r.tags || [], ingredients:r.ingredients || [], notes:r.notes || "", t:Date.parse(r.updated_at) || 1 };
+}
+function recipeToRow(r){
+  return { id:r.id, household_id:householdId, name:r.name, emoji:r.emoji || null,
+           servings:r.servings || 4, time_text:r.time || null, tags:r.tags || [],
+           ingredients:r.ingredients || [], notes:r.notes || null };
+}
+
+/* ---------- change detection ----------
+   A snapshot of what the server last saw, so a save only writes what moved. */
+function snap(){
+  const o = { recipes:{}, days:{}, extras:{}, checks:{} };
+  (state.recipes || []).forEach(r => { o.recipes[r.id] = JSON.stringify(recipeToRow(r)); });
+  for (const k in state.weeks) {
+    const w = state.weeks[k];
+    (w.days || []).forEach((d, i) => { o.days[k + "|" + i] = JSON.stringify(d || null); });
+    (w.extras || []).forEach(x => { o.extras[x.id] = JSON.stringify({ w:k, n:x.name, a:x.aisle || null }); });
+    const c = w.checked || {};
+    for (const key in c) o.checks[k + "|" + key] = c[key] && c[key].v ? 1 : 0;
+  }
+  return o;
+}
+
+function schedulePersist(){
+  if (!householdId) return;
+  clearTimeout(persistT);
+  persistT = setTimeout(persistNow, 700);
+}
+
+async function persistNow(){
+  if (!householdId || persisting) return;
+  persisting = true; setNet("busy");
+  try {
+    const now = snap();
+    const was = snapshot || { recipes:{}, days:{}, extras:{}, checks:{} };
+    const stamp = new Date().toISOString();
+    const jobs = [];
+
+    const upR = [];
+    for (const id in now.recipes) if (now.recipes[id] !== was.recipes[id]) upR.push(JSON.parse(now.recipes[id]));
+    if (upR.length) jobs.push(sb.from("recipes").upsert(upR));
+    const delR = Object.keys(was.recipes).filter(id => !(id in now.recipes));
+    if (delR.length) jobs.push(sb.from("recipes").update({ deleted_at: stamp }).in("id", delR));
+
+    const upD = [];
+    for (const k in now.days) if (now.days[k] !== was.days[k]) {
+      const cut = k.lastIndexOf("|");
+      const wkey = k.slice(0, cut), i = +k.slice(cut + 1), d = JSON.parse(now.days[k]);
+      upD.push({ household_id:householdId, week_start:wkey, day_index:i,
+                 recipe_id: d && d.type === "recipe" ? d.id : null,
+                 note_text: d && d.type === "text" ? d.text : null,
+                 emoji:     d && d.type === "text" ? d.emoji : null,
+                 servings:  d && d.type === "recipe" ? d.servings : null });
+    }
+    if (upD.length) jobs.push(sb.from("plan_days").upsert(upD, { onConflict:"household_id,week_start,day_index" }));
+
+    const upX = [];
+    for (const id in now.extras) if (now.extras[id] !== was.extras[id]) {
+      const v = JSON.parse(now.extras[id]);
+      upX.push({ id, household_id:householdId, week_start:v.w, name:v.n, aisle:v.a });
+    }
+    if (upX.length) jobs.push(sb.from("extras").upsert(upX));
+    const delX = Object.keys(was.extras).filter(id => !(id in now.extras));
+    if (delX.length) jobs.push(sb.from("extras").update({ deleted_at: stamp }).in("id", delX));
+
+    const upC = [];
+    for (const k in now.checks) if (now.checks[k] !== was.checks[k]) {
+      const cut = k.indexOf("|");                       // week key is a date, so the first pipe splits it
+      upC.push({ household_id:householdId, week_start:k.slice(0, cut),
+                 item_key:k.slice(cut + 1), checked: !!now.checks[k] });
+    }
+    if (upC.length) jobs.push(sb.from("item_checks").upsert(upC, { onConflict:"household_id,week_start,item_key" }));
+
+    if (jobs.length) {
+      const res = await Promise.all(jobs);
+      for (const r of res) if (r.error) throw r.error;
+    }
+    snapshot = now;
+    setNet("ok");
+  } catch (e) {
+    setNet("err");                                       // the local copy is still saved; we retry on the next change
+    console.warn("save failed", e);
+  }
+  persisting = false;
+}
+
+/* ---------- load ---------- */
+async function loadAll(){
+  if (!householdId) return;
+  setNet("busy");
+  try {
+    const [rs, pd, ex, ck] = await Promise.all([
+      sb.from("recipes").select("*").is("deleted_at", null),
+      sb.from("plan_days").select("*"),
+      sb.from("extras").select("*").is("deleted_at", null),
+      sb.from("item_checks").select("*")
+    ]);
+    for (const r of [rs, pd, ex, ck]) if (r.error) throw r.error;
+
+    state.recipes = (rs.data || []).map(rowToRecipe);
+    const weeks = {};
+    const wk = k => (weeks[k] = weeks[k] || blankWeek());
+    (pd.data || []).forEach(row => {
+      const w = wk(row.week_start);
+      w.days[row.day_index] =
+        row.recipe_id ? { type:"recipe", id:row.recipe_id, servings:row.servings || 4 }
+      : row.note_text ? { type:"text", text:row.note_text, emoji:row.emoji || "🍴" }
+      : null;
+      w.dayT[row.day_index] = Date.parse(row.updated_at) || 1;
+    });
+    (ex.data || []).forEach(row => wk(row.week_start).extras.push({ id:row.id, name:row.name, aisle:row.aisle, t:1 }));
+    (ck.data || []).forEach(row => { wk(row.week_start).checked[row.item_key] = { v: row.checked ? 1 : 0, t: Date.parse(row.updated_at) || 1 }; });
+
+    state.weeks = weeks;
+    if (!state.weeks[state.current]) state.weeks[state.current] = blankWeek();
+    localStorage.setItem(KEY, JSON.stringify(state));
+    snapshot = snap();
+    render();
+    setNet("ok");
+  } catch (e) {
+    setNet("err");
+    toast("Could not reach the database — showing the copy on this device");
+  }
+}
+
+/* ---------- live updates ---------- */
+function subscribeLive(){
+  if (!householdId || liveChannel) return;
+  const f = "household_id=eq." + householdId;
+  liveChannel = sb.channel("household-" + householdId);
+  ["recipes", "plan_days", "extras", "item_checks"].forEach(t => {
+    liveChannel.on("postgres_changes", { event:"*", schema:"public", table:t, filter:f }, onRemote);
+  });
+  liveChannel.subscribe();
+}
+function onRemote(){
+  clearTimeout(remoteT);
+  remoteT = setTimeout(() => { if (!persisting) loadAll(); }, 700);
+}
+
+/* ---------- the gate ---------- */
+function showGate(html){
+  document.getElementById("gate").innerHTML = '<div class="gatecard">' + html + "</div>";
+  document.getElementById("gate").classList.add("show");
+}
+function hideGate(){ document.getElementById("gate").classList.remove("show"); }
+
+function gateSignIn(){
+  showGate(
+    '<div class="glogo">🍽️</div>' +
+    "<h2>Jackson Family Meal Planner</h2>" +
+    "<p>Sign in and your recipes, weekly plans and shopping list follow you to any device — and stay in step with the rest of the house.</p>" +
+    '<div class="field"><label>Email</label><input id="g_email" type="email" inputmode="email" autocomplete="email" placeholder="you@example.com"></div>' +
+    '<button class="btn primary" data-act="sendlink">Email me a sign-in link</button>' +
+    '<p class="note">No password to remember. We email you a link, you tap it, and this device stays signed in.</p>'
+  );
+  setTimeout(() => { const el = document.getElementById("g_email"); if (el) el.focus(); }, 80);
+}
+function gateSent(email){
+  showGate(
+    '<div class="big">📬</div>' +
+    "<h2>Check your email</h2>" +
+    "<p>A sign-in link is on its way to<br><b>" + esc(email) + "</b></p>" +
+    '<p class="note">Open it on this device. The link is good for one hour. If it has not arrived in a minute, look in spam.</p>' +
+    '<button class="btn ghost sm" data-act="signout">Use a different email</button>'
+  );
+}
+function gateHousehold(){
+  showGate(
+    '<div class="big">🏡</div>' +
+    "<h2>Set up your household</h2>" +
+    "<p>Signed in as <b>" + esc(session.user.email) + "</b>.</p>" +
+    "<p>A household is what the recipes and shopping list belong to. Create one, then invite anyone else who shops or cooks.</p>" +
+    '<button class="btn primary" data-act="createhh">Create our household</button>' +
+    '<p class="note">If someone has already made one for your house, ask them to invite this email address instead, then reopen the app.</p>' +
+    '<button class="btn ghost sm" data-act="signout" style="margin-top:10px">Sign out</button>'
+  );
+}
+
+async function sendLink(){
+  const el = document.getElementById("g_email");
+  const email = (el.value || "").trim();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { toast("That does not look like an email address"); return; }
+  toast("Sending…");
+  const { error } = await sb.auth.signInWithOtp({
+    email, options: { emailRedirectTo: location.origin + location.pathname }
+  });
+  if (error) { toast(error.message || "Could not send the link"); return; }
+  gateSent(email);
+}
+
+async function createHousehold(){
+  const { data, error } = await sb.rpc("create_household", { household_name: "Jackson Family" });
+  if (error) { toast(error.message || "Could not create the household"); return; }
+  householdId = data;
+  state.householdId = householdId;
   localStorage.setItem(KEY, JSON.stringify(state));
-  closeSheet(); paintSync(); toast("This device is no longer sharing");
+  hideGate();
+  await adoptLocalOrLoad();
+  subscribeLive();
+  toast("Household ready");
 }
-let pollT=null;
-function startPolling(){
-  clearInterval(pollT);
-  pollT=setInterval(()=>{ if(document.visibilityState==="visible") pullNow(true); }, SYNC_POLL);
+
+/* First sign-in on a device that already had recipes: offer to keep them. */
+async function adoptLocalOrLoad(){
+  const localRecipes = (state.recipes || []).slice();
+  const localWeeks = state.weeks;
+  await loadAll();
+  if (state.recipes.length === 0 && localRecipes.length) {
+    if (confirm("This device has " + localRecipes.length + " recipes saved locally.\n\nOK = upload them to your household\nCancel = start empty")) {
+      state.recipes = localRecipes;
+      state.weeks = localWeeks;
+      normaliseIds();
+      if (!state.weeks[state.current]) state.weeks[state.current] = blankWeek();
+      snapshot = { recipes:{}, days:{}, extras:{}, checks:{} };
+      await persistNow();
+      render();
+      toast("Uploaded " + localRecipes.length + " recipes");
+    }
+  }
 }
-document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible") pullNow(true); });
+
+function accountSheet(){
+  if (!session) { gateSignIn(); return; }
+  openSheet(
+    '<h3 class="sh">Account</h3>' +
+    '<div class="subtle" style="margin-bottom:14px;line-height:1.7">Signed in as <b>' + esc(session.user.email) + "</b>.<br>" +
+    (householdId ? "Your recipes, weekly plans and shopping list are shared with everyone in your household and update live." : "No household yet.") +
+    (netState === "err" ? "<br><b style=\"color:#fca5a5\">Currently offline — changes are saved on this device and will go up when you are back.</b>" : "") +
+    "</div>" +
+    (householdId ? '<button class="btn green" data-act="invite">＋ Invite someone to the household</button>' : "") +
+    '<button class="btn ghost sm" data-act="reload" style="margin-top:10px">↻ Reload from the database</button>' +
+    '<button class="btn ghost sm" data-act="signout" style="margin-top:10px">Sign out</button>' +
+    '<button class="btn ghost sm" data-act="closesheet" style="margin-top:10px">Close</button>'
+  );
+}
+
+function inviteSheet(){
+  openSheet(
+    '<h3 class="sh">Invite someone</h3>' +
+    '<div class="subtle" style="margin-bottom:12px;line-height:1.7">They need to open the app and sign in once first, so the account exists. Then enter that same email here and they will see everything you see.</div>' +
+    '<div class="field"><label>Their email</label><input id="i_email" type="email" inputmode="email" placeholder="them@example.com"></div>' +
+    '<button class="btn primary" data-act="doinvite">Add them</button>' +
+    '<button class="btn ghost sm" data-act="closesheet" style="margin-top:10px">Cancel</button>'
+  );
+  setTimeout(() => { const el = document.getElementById("i_email"); if (el) el.focus(); }, 80);
+}
+
+async function doInvite(){
+  const email = (document.getElementById("i_email").value || "").trim();
+  if (!email) { toast("Enter their email"); return; }
+  const { data, error } = await sb.rpc("invite_to_household", { invitee_email: email });
+  if (error) { toast(error.message || "Could not add them"); return; }
+  if (data === "not_signed_up") {
+    toast("They have not signed in yet — ask them to open the app first");
+    return;
+  }
+  closeSheet();
+  toast(email + " can now see your household");
+}
+
+async function signOut(){
+  if (liveChannel) { sb.removeChannel(liveChannel); liveChannel = null; }
+  await sb.auth.signOut();
+  session = null; householdId = null; snapshot = null;
+  delete state.householdId;
+  localStorage.setItem(KEY, JSON.stringify(state));
+  closeSheet();
+  gateSignIn();
+  paintNet();
+}
+
+/* ---------- boot ---------- */
+async function afterAuth(){
+  paintNet();
+  if (!session) { gateSignIn(); return; }
+  const { data, error } = await sb.rpc("my_household");
+  if (error) {
+    // Could be no signal rather than no household. If this device has been in
+    // a household before, trust that and work from the local copy — being
+    // locked out of the shopping list in a shop with bad reception is worse
+    // than being briefly out of date.
+    if (state.householdId) {
+      householdId = state.householdId;
+      hideGate(); setNet("err"); render(); subscribeLive();
+      toast("Offline — showing the copy on this device");
+      return;
+    }
+    gateHousehold(); return;
+  }
+  householdId = data;
+  if (!householdId) { gateHousehold(); return; }
+  state.householdId = householdId;
+  localStorage.setItem(KEY, JSON.stringify(state));
+  hideGate();
+  await adoptLocalOrLoad();
+  subscribeLive();
+}
+
+async function boot(){
+  try {
+    const { data } = await sb.auth.getSession();
+    session = data ? data.session : null;
+  } catch (e) { session = null; }
+  sb.auth.onAuthStateChange((_evt, s2) => {
+    const had = !!session;
+    session = s2;
+    if (!had && s2) afterAuth(); else paintNet();
+  });
+  await afterAuth();
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && householdId && !persisting) loadAll();
+});
 
 let toastT;
 function toast(msg){
@@ -1385,7 +1589,7 @@ function toast(msg){
 }
 
 render();
-if(syncOn()){ pullNow(true); startPolling(); }
+boot();
 </script>
 </body>
 </html>
